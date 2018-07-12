@@ -1,0 +1,136 @@
+$gray: #c0c0c0;
+$dark-gray: #6e6e6e;
+
+$cell-border-width: 1px;
+
+.game-container {
+  text-align: center;
+  padding-top: 20px;
+}
+
+.game-controls {
+  padding-top: 50px;
+  width: 300px;
+  margin: 0 auto;
+  label {
+    display: inline-block;
+    width: 100px;
+  }
+}
+
+.pop-box {
+  box-sizing: border-box;
+  background: $gray;
+  border-left: $cell-border-width solid #FFF;
+  border-top: $cell-border-width solid #FFF;
+  border-right: $cell-border-width solid $dark-gray;
+  border-bottom: $cell-border-width solid $dark-gray;
+
+  &--inset {
+    border-left: $cell-border-width solid $dark-gray;
+    border-top: $cell-border-width solid $dark-gray;
+    border-right: $cell-border-width solid #FFF;
+    border-bottom: $cell-border-width solid #FFF;
+  }
+}
+
+.minesweeper {
+  display: inline-block;
+  padding: 15px;
+
+  &__info {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    width: 100%;
+    margin: 0 auto;
+    margin-bottom: 15px;
+  }
+
+  &__win-label {
+    font-size: 15px;
+  }
+}
+
+.minefield {
+  display: inline-block;
+  overflow: auto;
+}
+
+.minefield-row {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.mine-cell {
+  position: relative;
+  display: inline-block;
+  width: 25px;
+  height: 25px;
+  line-height: 25px;
+  font-size: 20px;
+  text-align: center;
+  vertical-align: middle;
+  cursor: default;
+
+  &--hidden:hover:active:not(.mine-cell--flagged),
+  &--revealed {
+    background: #AAA;
+    border: $cell-border-width solid $dark-gray;
+  }
+
+  &--revealed.mine-cell--mine {
+    background: #F00;
+  }
+
+  &--revealed.mine-cell--mine {
+    background-image: url("http://old.no/icon/entertainment/mini-mine.gif");
+    background-repeat: no-repeat;
+    background-color: #F00;
+    background-size: 70% 70%;
+    background-position: center;
+  }
+
+  &--flagged {
+    background-image: url("http://dougx.net/sweeper/flag.png");
+    background-repeat: no-repeat;
+    //background-color: #F00;
+    background-size: 70% 70%;
+    background-position: center;
+  }
+}
+
+.mine-cell-number {
+  &--1 {
+    color: rgb(0, 0, 255);
+  }
+  &--2 {
+    color: rgb(0, 123, 0);
+  }
+  &--3 {
+    color: rgb(255, 0, 0);
+  }
+  &--4 {
+    color: rgb(0, 0, 123);
+  }
+  &--5 {
+    color: rgb(123, 0, 0);
+  }
+  &--6 {
+    color: rgb(0, 128, 128);
+  }
+  &--7 {
+    color: rgb(0, 0, 0);
+  }
+  &--8 {
+    color: rgb(189, 189, 189);
+  }
+}
+
+.digital-counter {
+  display: inline-block;
+  background: #000;
+  color: #F00;
+  font-size: 40px;
+  font-family: Courier;
+}

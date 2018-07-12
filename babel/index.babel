@@ -1,0 +1,447 @@
+const {range, sampleSize, flatten} = _; // lodash
+const initialWidth = 16;
+const initialHeight = 16;
+const initialMines = 40;
+
+// helpers for accessing/modifying minesweeper state
+const helpers = {
+  // assigns props to the cell with id
+  assignCell(state, cellId, props) {
+    const {grid} = state;
+    const cell = this.getCell(state, cellId);
+    const {x, y} = cell;
+    const row = grid[cell.y];
+    return { // immutable state
+      ...state,
+      grid: [
+        ...grid.slice(0, y),
+        [
+          ...row.slice(0, x),
+          {...cell, ...props},
+          ...row.slice(x + 1)
+        ],
+        ...grid.slice(y + 1)
+      ]
+    };
+  },
+
+  // assign props to all cells in cellIds
+  assignCells(state, cellIds, props) {
+    return {
+      ...state,
+      grid: state.grid.map((row) =>
+        row.map((cell) => cellIds.includes(cell.id) ?
+          ({...cell, ...props}) :
+          cell
+        )
+      )
+    };
+  },
+
+  // get cell by id
+  getCell(state, cellId) {
+    return flatten(state.grid).find((cell) => cell.id === cellId);
+  },
+
+  // get cell at coordinate x, y
+  getCellAt(state, {x, y}) {
+    const {grid, width, height} = state;
+    if(x >= 0 && y >= 0 && x < width && y < height) { // bounds check
+      return grid[y][x];
+    }
+    return null;
+  },
+
+  // get cells around cell (where cell.id === cellId)
+  getNeighbors(state, cellId) {
+    const {grid} = state;
+    const {x, y} = this.getCell(state, cellId);
+    return [
+      this.getCellAt(state, {x: x - 1, y: y - 1}), // top left
+      this.getCellAt(state, {x: x, y: y - 1}), // top
+      this.getCellAt(state, {x: x + 1, y: y - 1}), // top right
+
+      this.getCellAt(state, {x: x - 1, y: y}), // left
+      this.getCellAt(state, {x: x + 1, y: y}), // right
+
+      this.getCellAt(state, {x: x - 1, y: y + 1}), // bottom left
+      this.getCellAt(state, {x: x, y: y + 1}), // bottom
+      this.getCellAt(state, {x: x + 1, y: y + 1}), // bottom right
+    ].filter((cell) => !!cell); // remove null cells (if target cell is on an edge)
+  },
+
+  // starting at startCell continuing through its neighbors, finds all cells that touch no mines (returns an array of ids)
+  // this is required to open large pockets of empty space when a cell is revealed
+  getRevealCells(state, startCellId, visited=[]) {
+    const cell = this.getCell(state, startCellId);
+    if(cell.mine) { // don't reveal empty cells around mines
+      return [startCellId];
+    }
+    const neighbors = this.getNeighbors(state, startCellId);
+    const neighborMines = neighbors.filter((cell) => cell.mine);
+    visited.push(startCellId); // keep track of visited mines (passed to recursive calls)
+
+    if(neighborMines.length) { // stop if the cell borders a mine (but still reveal it)
+      return [startCellId];
+    } else {
+      const toReveal = neighbors
+          .filter((neighbor) => !neighbor.flagged && !visited.includes(neighbor.id)) // unvisited/unflagged neighbors only
+          .map((neighbor) => neighbor.id);
+
+      return flatten([
+        startCellId,
+        ...toReveal.map((cellId) => this.getRevealCells(state, cellId, visited))
+      ]);
+    }
+  },
+
+  // returns the number of mines bordering a cell
+  countMinesAround(state, cellId) {
+    return this.getNeighbors(state, cellId).filter((c) => c.mine).length;
+  },
+
+  // check if you are blown up
+  hasLost(state) {
+    const cells = flatten(state.grid);
+    return cells.some((c) => c.mine && c.revealed);
+  },
+
+  // check if all non-mine cells are revealed
+  hasWon(state) {
+    const cells = flatten(state.grid);
+    const nonMines = cells.filter((c) => !c.mine);
+    return nonMines.every((c) => c.revealed);
+  }
+};
+
+const minesweeperActions = {
+  "@@redux/INIT"(state) {return state;},
+
+  FLAG_CELL(state, {cellId}) {
+    const cell = helpers.getCell(state, cellId);
+    if(cell.revealed) {
+      return state;
+    } else {
+      return helpers.assignCell(state, cellId, {
+        flagged: !cell.flagged
+      });
+    }
+  },
+
+  // reveal a cell (and all cells around it until a cell containing a mine is reached)
+  REVEAL_CELL(state, {cellId}) {
+    if(state.won || state.lost || helpers.getCell(state, cellId).flagged) {
+      return state;
+    }
+    if(!state.minesPlaced) {
+      state = this.PLACE_MINES(state, {cellIdToAvoid: cellId});
+    }
+    const toReveal = helpers.getRevealCells(state, cellId);
+    const newState = helpers.assignCells(state, toReveal, {revealed: true, flagged: false});
+    const hasLost = helpers.hasLost(newState);
+    const hasWon = !hasLost && helpers.hasWon(newState);
+    return {
+      ...newState,
+      won: hasWon,
+      lost: hasLost,
+      endTime: Date.now()
+    };
+  },
+
+  REVEAL_AROUND_CELL(state, {cellId}) {
+    const cell = helpers.getCell(state, cellId);
+    const neighbors = helpers.getNeighbors(state, cellId);
+    const neighborMineCount = neighbors.filter((n) => n.mine).length;
+    const neighborFlagCount = neighbors.filter((n) => n.flagged).length;
+    if(cell.revealed && neighborMineCount === neighborFlagCount) {
+      const nonFlaggedNeighborIds = neighbors.filter((n) => !n.flagged).map((n) => n.id);
+      return nonFlaggedNeighborIds.reduce((state, cellId) => this.REVEAL_CELL(state, {cellId}), state);
+    }
+    return state;
+  },
+
+  PLACE_MINES(state, {cellIdToAvoid}) {
+    const validCells = flatten(state.grid).filter((c) => c.id !== cellIdToAvoid).map((c) => c.id);
+    const mines = sampleSize(validCells, state.mineCount);
+    return {
+      ...helpers.assignCells(state, mines, {mine: true}),
+      minesPlaced: true,
+      startTime: Date.now()
+    };
+  }
+};
+
+const store = getMinesweeperStore({width: initialWidth, height: initialHeight, mineCount: initialMines});
+
+function minesweeperReducer(state, action) {
+  if(minesweeperActions.hasOwnProperty(action.type)) { // checks if handler exists for the action
+    return minesweeperActions[action.type](state, action);
+  } else {
+    console.warn(`Invalid minesweeper action: "${action.type}" (ignoring)`);
+    return state;
+  }
+}
+
+// create a redux store with using minesweeper reducer and an initial state generated from passed options
+function getMinesweeperStore({width, height, mineCount}) {
+  const initialState = {
+    width, height, mineCount,
+    minesPlaced: false,
+    lost: false,
+    won: false,
+    startTime: null, // starts when the first cell is clicked
+    endTime: null, // set when won/lost
+    grid: range(0, height).map((y) => range(0, width).map((x) => { // create a 2d grid of cells
+      return {
+        id: `cell-${x}-${y}`,
+        x, y,
+        flagged: false,
+        mine: false,
+        revealed: false
+      };
+    }))
+  };
+  return Redux.createStore((state=initialState, action={}) => minesweeperReducer(state, action));
+}
+
+// used to create popout border effect
+function PopBox(props) {
+  const className = classNames("pop-box", props.inset ? "pop-box--inset" : null, props.className);
+  return (<div {...props} className={className}/>)
+}
+
+function Minefield(props) {
+  return (<PopBox {...props} className="minefield" inset/>);
+}
+
+function MinefieldRow(props) {
+  return (<div {...props} className="minefield-row"/>);
+}
+
+function MineCell(props) {
+  const {revealed, flagged, mine} = props;
+  const className = classNames(
+    "mine-cell",
+    `mine-cell--${revealed ? "revealed" : "hidden"}`,
+    mine ? "mine-cell--mine" : null,
+    flagged ? "mine-cell--flagged" : null
+  );
+
+  return (<PopBox {...props} className={className} revealed={true}/>);
+}
+
+function MineCellNumber({number}) {
+  const className = `mine-cell-number mine-cell-number--${number}`;
+  return (<span className={className}>{number || ""}</span>);
+}
+
+function CellContent({revealed, mine, borderMineCount}) {
+  if(!mine && borderMineCount && revealed) {
+    return (<MineCellNumber number={borderMineCount}/>);
+  }
+  return null;
+}
+
+function DigitalCounter(props) {
+  const {number} = props;
+  const paddedNumber = padNumber(number, 3);
+  return (<div {...props} className="digital-counter">{paddedNumber}</div>);
+}
+
+class Minesweeper extends React.Component {
+  componentWillUnmount() {
+    this.stopTimer();
+  }
+
+  componentWillReceiveProps(nextProps) {
+    const {minesPlaced, won, lost} = this.props;
+
+    if(!minesPlaced && nextProps.minesPlaced) {
+      this.startTimer();
+    }
+    if((!won && nextProps.won) || (!lost && nextProps.lost)) {
+      clearInterval(this.timer);
+      this.stopTimer();
+    }
+  }
+
+  startTimer() {
+    this.timer = setInterval(() => this.forceUpdate(), 500);
+  }
+
+  stopTimer() {
+    clearInterval(this.timer);
+  }
+
+  onCellMouseUp(cell, event) {
+    event.preventDefault();
+    const {store} = this.props;
+    const {which} = event.nativeEvent;
+    switch(event.nativeEvent.which) {
+      case 1:
+        store.dispatch({
+          type: "REVEAL_CELL",
+          cellId: cell.id
+        });
+        break;
+      case 2:
+        store.dispatch({
+          type: "REVEAL_AROUND_CELL",
+          cellId: cell.id
+        });
+        break;
+    }
+    return false;
+  }
+
+  onCellMouseDown(cell, event) {
+    event.preventDefault();
+    if(event.nativeEvent.which === 3) {
+      const {store} = this.props;
+      store.dispatch({
+        type: "FLAG_CELL",
+        cellId: cell.id
+      });
+    }
+    return false;
+  }
+
+  render() {
+    const {store, grid, won, lost, mineCount, startTime, endTime, onReset} = this.props;
+    const flagCount = flatten(grid).filter((c) => c.flagged).length;
+    const now = Date.now();
+
+    return (
+      <PopBox className="minesweeper">
+        <PopBox className="minesweeper__info" inset>
+          <DigitalCounter number={mineCount - flagCount}/>
+          <button className="minesweeper__win-label" onClick={onReset}>
+            {won ?
+              "You won!" :
+              lost ?
+                "You Lost" :
+                "Reset"
+            }
+          </button>
+          <DigitalCounter number={
+              startTime ?
+                Math.floor(((won || lost ? endTime : now) - startTime) / 1000) :
+                0
+          }/>
+        </PopBox>
+
+        <Minefield>
+          {grid.map((row, i) =>
+            <MinefieldRow key={`row-${i}`}>
+              {row.map((cell) =>
+                <MineCell {...cell}
+                  key={cell.id}
+                  revealed={cell.revealed || ((won || lost) && !cell.flagged && cell.mine)}
+                  onMouseDown={this.onCellMouseDown.bind(this, cell)}
+                  onClick={this.onCellMouseUp.bind(this, cell)}
+                  onContextMenu={(e) => (e.preventDefault(), false)}
+                >
+                  <CellContent {...cell} borderMineCount={helpers.countMinesAround(this.props, cell.id)}/>
+                </MineCell>
+              )}
+            </MinefieldRow>
+          )}
+        </Minefield>
+      </PopBox>
+    );
+  }
+}
+
+class App extends React.Component {
+  constructor(props) {
+    super(props);
+    this.store = store;
+    this.state = {
+      width: initialWidth,
+      height: initialHeight,
+      mineCount: initialMines,
+      storeState: store.getState(),
+    };
+  }
+
+  componentDidMount() {
+    this.subscribe();
+  }
+
+  componentWillUnmount() {
+    this.unsubscribe();
+  }
+
+  subscribe() {
+    this.unsub = this.store.subscribe(() => this.setState({
+      storeState: this.store.getState()
+    }));
+  }
+
+  unsubscribe() {
+    if(this.unsub) {
+      this.unsub();
+      this.unsub = null;
+    }
+  }
+
+  updateStateInt(key, event) {
+    this.setState({[key]: parseInt(event.target.value)});
+  }
+
+  reset() {
+    const {width, height, mineCount} = this.state;
+    this.unsubscribe();
+    this.store = getMinesweeperStore({width, height, mineCount});
+    this.subscribe();
+    this.setState({storeState: this.store.getState()});
+  }
+
+  render() {
+    const {storeState, width, height, mineCount} = this.state;
+    return (
+      <div>
+        <div className="game-container">
+          <Minesweeper {...storeState} store={this.store} onReset={this.reset.bind(this)}/>
+        </div>
+        <div className="game-controls">
+          <div>
+            <label>Width</label>
+            <input type="number" value={width} onChange={this.updateStateInt.bind(this, "width")} min="0" max="50"/>
+          </div>
+          <div>
+            <label>Height</label>
+            <input type="number" value={height} onChange={this.updateStateInt.bind(this, "height")} min="0" max="50"/>
+          </div>
+          <div>
+            <label>Mines</label>
+            <input type="number" value={mineCount} onChange={this.updateStateInt.bind(this, "mineCount")} min="0" max="2499"/>
+          </div>
+          <button onClick={this.reset.bind(this)}>Start</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+function padNumber(n, length) {
+  const isNegative = n < 0;
+  if(isNegative) {
+    n = n * -1
+    length -= 1; // tack on "-" after padding
+  };
+  n = n.toString();
+  while(n.length < length) {
+    n = "0" + n;
+  }
+  if(isNegative) {
+    n = "-" + n;
+  }
+  return n;
+}
+
+function classNames(...names) {
+  return names.filter((n) => !!n).join(" ");
+}
+
+ReactDOM.render(<App/>, document.querySelector(".outlet"));
